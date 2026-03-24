@@ -115,6 +115,64 @@
 #include "background.h"
 
 /**
+ * Interpolate external H(z) table and its first redshift derivative.
+ */
+static int background_external_Hz_at_z(struct background * pba,
+                                       double z,
+                                       double * H,
+                                       double * dH_dz) {
+
+  int inf;
+  int sup;
+  double h;
+  double a;
+  double b;
+
+  class_test((z < pba->external_Hz_z[0]) || (z > pba->external_Hz_z[pba->external_Hz_size-1]),
+             pba->error_message,
+             "requested z=%g outside external H(z) range [%g, %g]",
+             z,
+             pba->external_Hz_z[0],
+             pba->external_Hz_z[pba->external_Hz_size-1]);
+
+  class_call(array_interpolate_spline(pba->external_Hz_z,
+                                      pba->external_Hz_size,
+                                      pba->external_Hz_H,
+                                      pba->external_Hz_ddH,
+                                      1,
+                                      z,
+                                      &(pba->external_Hz_last_index),
+                                      H,
+                                      1,
+                                      pba->error_message),
+             pba->error_message,
+             pba->error_message);
+
+  inf = pba->external_Hz_last_index;
+  sup = inf+1;
+  class_test(sup >= pba->external_Hz_size,
+             pba->error_message,
+             "external H(z) interpolation failed near z=%g",
+             z);
+
+  h = pba->external_Hz_z[sup]-pba->external_Hz_z[inf];
+  class_test(h <= 0.,
+             pba->error_message,
+             "external H(z) table has non-increasing z near indices (%d,%d)",
+             inf,
+             sup);
+
+  b = (z-pba->external_Hz_z[inf])/h;
+  a = 1.-b;
+  /* Derivative of a cubic spline */
+  *dH_dz = (pba->external_Hz_H[sup]-pba->external_Hz_H[inf])/h
+    + h/6.*((1.-3.*a*a)*pba->external_Hz_ddH[inf]
+            +(3.*b*b-1.)*pba->external_Hz_ddH[sup]);
+
+  return _SUCCESS_;
+}
+
+/**
  * Background quantities at given redshift z.
  *
  * Evaluates all background quantities at a given value of
@@ -581,6 +639,26 @@ int background_functions(
   /** - compute derivative of H with respect to conformal time */
   pvecback[pba->index_bg_H_prime] = - (3./2.) * (rho_tot + p_tot) * a + pba->K/a;
 
+  /** - optional override by tabulated external H(z); species densities are untouched */
+  if (pba->has_external_Hz == _TRUE_) {
+    double z = 1./a-1.;
+    double H_ext;
+    double dH_dz_ext;
+
+    /* Modify the tabulated H(z) only within the redshift where the external H(z) is defined */
+    if ((z >= pba->external_Hz_z[0]) && (z <= pba->external_Hz_z[pba->external_Hz_size-1])) {
+      class_call(background_external_Hz_at_z(pba,
+                                             z,
+                                             &H_ext,
+                                             &dH_dz_ext),
+                 pba->error_message,
+                 pba->error_message);
+
+      pvecback[pba->index_bg_H] = H_ext;
+      pvecback[pba->index_bg_H_prime] = -H_ext*dH_dz_ext;
+    }
+  }
+
   /* Total energy density*/
   pvecback[pba->index_bg_rho_tot] = rho_tot;
 
@@ -597,7 +675,15 @@ int background_functions(
   }
 
   /** - compute critical density */
-  rho_crit = rho_tot-pba->K/a/a;
+  if (pba->has_external_Hz == _TRUE_) {
+    /** - compute critical density from the expansion rate */
+    rho_crit = pvecback[pba->index_bg_H]*pvecback[pba->index_bg_H];
+  }
+  else {
+    /* Although the previous formula is general. Let's keep the code unchanged
+     for the case I have not modified. */
+    rho_crit = rho_tot-pba->K/a/a;
+  }
   class_test(rho_crit <= 0.,
              pba->error_message,
              "rho_crit = %e instead of strictly positive",rho_crit);
@@ -950,6 +1036,14 @@ int background_free_input(
     if (pba->scf_parameters != NULL)
       free(pba->scf_parameters);
   }
+
+  if (pba->external_Hz_z != NULL)
+    free(pba->external_Hz_z);
+  if (pba->external_Hz_H != NULL)
+    free(pba->external_Hz_H);
+  if (pba->external_Hz_ddH != NULL)
+    free(pba->external_Hz_ddH);
+
   return _SUCCESS_;
 }
 

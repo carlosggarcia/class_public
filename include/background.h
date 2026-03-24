@@ -58,6 +58,11 @@ struct background
   double H0; /**< \f$ H_0 \f$: Hubble parameter (in fact, [\f$H_0/c\f$]) in \f$ Mpc^{-1} \f$ */
   double h;  /**< reduced Hubble parameter */
 
+  char* command_external_Hz;  /**< string with the command for calling 'external_Hz' */
+  short has_external_Hz; /**< use tabulated external H(z) instead of Friedmann-computed H(z) where available */
+  short external_Hz_in_km_s_Mpc; /**< interpret input H(z) values in km/s/Mpc (otherwise in 1/Mpc) */
+  FileArg external_Hz_file; /**< file containing two columns: z and H(z) */
+
   double Omega0_g; /**< \f$ \Omega_{0 \gamma} \f$: photons */
   double T_cmb;    /**< \f$ T_{cmb} \f$: current CMB temperature in Kelvins */
 
@@ -235,6 +240,12 @@ struct background
   double * d2tau_dz2_table; /**< vector d2tau_dz2_table[index_loga] with values of \f$ d^2 \tau / dz^2 \f$ (conformal time) */
   double * d2z_dtau2_table; /**< vector d2z_dtau2_table[index_loga] with values of \f$ d^2 z / d\tau^2 \f$ (conformal time) */
   double * d2background_dloga2_table; /**< table d2background_dtau2_table[index_loga*pba->bg_size+pba->index_bg] with values of \f$ d^2 b_i / d\log(a)^2 \f$ */
+
+  int external_Hz_size; /**< number of rows in external H(z) table */
+  int external_Hz_last_index; /**< cached index for spline interpolation in external H(z) table */
+  double * external_Hz_z; /**< redshift sampling for external H(z) */
+  double * external_Hz_H; /**< H(z) values in CLASS units [1/Mpc] */
+  double * external_Hz_ddH; /**< spline second derivatives of H(z) */
 
   //@}
 

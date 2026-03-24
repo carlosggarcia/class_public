@@ -26,6 +26,149 @@
 #include "output.h"
 
 /**
+ * Read a tabulated expansion history H(z) from file.
+ * Expected format: two columns per non-comment line, z and H(z).
+ */
+static int input_read_external_Hz(struct precision * ppr,
+                                  struct background * pba,
+                                  ErrorMsg errmsg) {
+
+  FILE * hz_file;
+  char line[_LINE_LENGTH_MAX_];
+  char resolved_file[_ARGUMENT_LENGTH_MAX_];
+  int status;
+  int capacity = 128;
+  int count = 0;
+  int i;
+  double z_val, H_val;
+
+  class_test(pba->has_external_Hz == _FALSE_,
+             errmsg,
+             "internal error: input_read_external_Hz called while has_external_Hz is false");
+
+  /* Check if input is a file or a command */
+  if (pba->command_external_Hz != NULL) {
+    class_sprintf(resolved_file,"command: %s",pba->command_external_Hz);
+    hz_file = popen(pba->command_external_Hz, "r");
+    class_test(hz_file == NULL,
+               pba->error_message,
+               "The program failed to set the environment for the external command. Maybe you ran out of memory.");
+  }
+  else {
+    class_sprintf(resolved_file,"%s",pba->external_Hz_file);
+    class_open(hz_file, pba->external_Hz_file,"r",errmsg);
+  }
+
+  class_alloc(pba->external_Hz_z,capacity*sizeof(double),errmsg);
+  class_alloc(pba->external_Hz_H,capacity*sizeof(double),errmsg);
+  class_alloc(pba->external_Hz_ddH,capacity*sizeof(double),errmsg);
+
+  /* Read and store the table in one pass */
+  while (fgets(line,_LINE_LENGTH_MAX_,hz_file) != NULL) {
+    if ((line[0] == '#') || (line[0] == '\n') || (line[0] == '\r')) {
+      continue;
+    }
+
+    status = sscanf(line,"%lf %lf",&z_val,&H_val);
+    class_test(status != 2,
+               errmsg,
+               "could not parse line '%s' in external_Hz_file '%s': expected exactly two columns (z, H)",
+               line,
+               resolved_file);
+
+    class_test(z_val < 0.,
+               errmsg,
+               "external_Hz_file '%s' contains negative redshift z=%g",
+               resolved_file,
+               z_val);
+    class_test(H_val <= 0.,
+               errmsg,
+               "external_Hz_file '%s' contains non-positive H(z)=%g",
+               resolved_file,
+               H_val);
+
+    if (count == capacity) {
+      capacity *= 2;
+      class_realloc(pba->external_Hz_z,capacity*sizeof(double),errmsg);
+      class_realloc(pba->external_Hz_H,capacity*sizeof(double),errmsg);
+      class_realloc(pba->external_Hz_ddH,capacity*sizeof(double),errmsg);
+    }
+
+    pba->external_Hz_z[count] = z_val;
+    
+    if (pba->external_Hz_in_km_s_Mpc == _TRUE_) {
+      pba->external_Hz_H[count] = H_val*1.e3/_c_;
+    }
+    else {
+      pba->external_Hz_H[count] = H_val;
+    }
+
+    count++;
+  }
+
+  class_test(count < 2,
+             errmsg,
+             "external_Hz_file '%s' must contain at least two valid rows",
+             resolved_file);
+
+  pba->external_Hz_size = count;
+  class_realloc(pba->external_Hz_z,count*sizeof(double),errmsg);
+  class_realloc(pba->external_Hz_H,count*sizeof(double),errmsg);
+  class_realloc(pba->external_Hz_ddH,count*sizeof(double),errmsg);
+
+  /* Close the program or file */
+  if (pba->command_external_Hz != NULL) {
+    status = pclose(hz_file);
+    class_test(status == -1,
+               pba->error_message,
+               "The program failed to close the environment for the external command. Maybe you ran out of memory.");
+  }
+  else {
+    fclose(hz_file);
+  }
+
+  /* Check that the array is ordered properly */
+  for (i=1; i<pba->external_Hz_size; i++) {
+    class_test(pba->external_Hz_z[i] <= pba->external_Hz_z[i-1],
+               errmsg,
+               "external_Hz must have strictly increasing z values; found z[%d]=%g after z[%d]=%g",
+               i,
+               pba->external_Hz_z[i],
+               i-1,
+               pba->external_Hz_z[i-1]);
+  }
+
+  /* Check that z=0 is passed */
+  class_test(pba->external_Hz_z[0] != 0.,
+             errmsg,
+             "external_Hz_file '%s' must include z=0 as first row to define H0 consistently",
+             resolved_file);
+
+  /* Enforce consistency: define H0 and h directly from the external H(z) table at z=0. */
+  class_test(fabs(pba->external_Hz_z[0]) > 100.*ppr->smallest_allowed_variation,
+             errmsg,
+             "external_Hz_file '%s' must include z=0 as first row to define H0 consistently",
+             resolved_file);
+
+  pba->H0 = pba->external_Hz_H[0];
+  pba->h = pba->H0*_c_/1.e5;
+
+  class_call(array_spline_table_lines(pba->external_Hz_z,
+                                      pba->external_Hz_size,
+                                      pba->external_Hz_H,
+                                      1,
+                                      pba->external_Hz_ddH,
+                                      _SPLINE_NATURAL_,
+                                      errmsg),
+             errmsg,
+             errmsg);
+
+  pba->external_Hz_last_index = 0;
+
+  return _SUCCESS_;
+}
+
+/**
  * Initialize input parameters from external file.
  *
  * @param argc    Input: Number of command line arguments
@@ -2373,6 +2516,40 @@ int input_read_parameters_species(struct file_content * pfc,
 
 
   sigma_B = 2.*pow(_PI_,5.)*pow(_k_B_,4.)/15./pow(_h_P_,3.)/pow(_c_,2);  // [W/(m^2 K^4) = Kg/(K^4 s^3)]
+
+  /** Optional: tabulated arbitrary H(z) */
+
+  /* Case 1: external file */
+  class_call(parser_read_string(pfc,"external_Hz_file",&string1,&flag1,errmsg),
+             errmsg,
+             errmsg);
+  if (flag1 == _TRUE_) {
+    class_sprintf(pba->external_Hz_file,"%s",string1);
+    pba->has_external_Hz = _TRUE_;
+  }
+
+  /* Case 2: command to compute H(z) on the fly */
+  class_call(parser_read_string(pfc, "command_external_Hz", &string1, &flag2, errmsg),
+              errmsg, errmsg);
+  if (flag2 == _TRUE_) {
+    // class_sprintf(pba->command_external_Hz,"%s",string1);
+    pba->command_external_Hz = (char *) malloc (strlen(string1) + 1);
+    strcpy(pba->command_external_Hz, string1);
+    pba->has_external_Hz = _TRUE_;
+  }
+
+  /* Check that only one option is specified */
+  class_test(((flag1 == _TRUE_) && (flag2 == _TRUE_)),
+             errmsg,
+             "You can only enter one of 'external_Hz_file' or 'command_external_Hz'.");
+
+  if (pba->has_external_Hz == _TRUE_) {
+    class_call(input_read_external_Hz(ppr,pba,errmsg),
+               errmsg,
+               errmsg);
+  }
+
+  /* Complete set of parameters */
 
   /** 1) Omega_0_g (photons) and T_cmb */
   /* Read */
@@ -5764,6 +5941,14 @@ int input_default_params(struct background *pba,
   /** 5) Hubble parameter */
   pba->h = 0.67810;
   pba->H0 = pba->h*1.e5/_c_;
+  pba->has_external_Hz = _FALSE_;
+  pba->external_Hz_in_km_s_Mpc = _FALSE_;
+  pba->external_Hz_file[0] = '\0';
+  pba->external_Hz_size = 0;
+  pba->external_Hz_last_index = 0;
+  pba->external_Hz_z = NULL;
+  pba->external_Hz_H = NULL;
+  pba->external_Hz_ddH = NULL;
 
   /** 6) Primordial Helium fraction */
   pth->YHe = _YHE_BBN_;
