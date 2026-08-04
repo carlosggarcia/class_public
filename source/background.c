@@ -173,6 +173,63 @@ static int background_external_Hz_at_z(struct background * pba,
 }
 
 /**
+ * Interpolate external D(z) table and its first redshift derivative.
+ */
+static int background_external_growth_at_z(struct background * pba,
+                                           double z,
+                                           double * D,
+                                           double * dD_dz) {
+
+  int inf;
+  int sup;
+  double h;
+  double a;
+  double b;
+
+  class_test((z < pba->external_growth_z[0]) || (z > pba->external_growth_z[pba->external_growth_size-1]),
+             pba->error_message,
+             "requested z=%g outside external D(z) range [%g, %g]",
+             z,
+             pba->external_growth_z[0],
+             pba->external_growth_z[pba->external_growth_size-1]);
+
+  class_call(array_interpolate_spline(pba->external_growth_z,
+                                      pba->external_growth_size,
+                                      pba->external_growth_D,
+                                      pba->external_growth_ddD,
+                                      1,
+                                      z,
+                                      &(pba->external_growth_last_index),
+                                      D,
+                                      1,
+                                      pba->error_message),
+             pba->error_message,
+             pba->error_message);
+
+  inf = pba->external_growth_last_index;
+  sup = inf+1;
+  class_test(sup >= pba->external_growth_size,
+             pba->error_message,
+             "external D(z) interpolation failed near z=%g",
+             z);
+
+  h = pba->external_growth_z[sup]-pba->external_growth_z[inf];
+  class_test(h <= 0.,
+             pba->error_message,
+             "external D(z) table has non-increasing z near indices (%d,%d)",
+             inf,
+             sup);
+
+  b = (z-pba->external_growth_z[inf])/h;
+  a = 1.-b;
+  *dD_dz = (pba->external_growth_D[sup]-pba->external_growth_D[inf])/h
+    + h/6.*((1.-3.*a*a)*pba->external_growth_ddD[inf]
+            +(3.*b*b-1.)*pba->external_growth_ddD[sup]);
+
+  return _SUCCESS_;
+}
+
+/**
  * Background quantities at given redshift z.
  *
  * Evaluates all background quantities at a given value of
@@ -265,6 +322,24 @@ int background_at_z(
                                                         pba->error_message),
                pba->error_message,
                pba->error_message);
+  }
+
+  if ((return_format == long_info)
+      && (pba->has_external_growth == _TRUE_)
+      && (z >= pba->external_growth_z[0])
+      && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
+    double D_ext;
+    double dD_dz_ext;
+
+    class_call(background_external_growth_at_z(pba,
+                                               z,
+                                               &D_ext,
+                                               &dD_dz_ext),
+               pba->error_message,
+               pba->error_message);
+
+    pvecback[pba->index_bg_D] = D_ext;
+    pvecback[pba->index_bg_f] = -(1.+z)*dD_dz_ext/D_ext;
   }
 
   return _SUCCESS_;
@@ -1043,6 +1118,17 @@ int background_free_input(
     free(pba->external_Hz_H);
   if (pba->external_Hz_ddH != NULL)
     free(pba->external_Hz_ddH);
+  if (pba->command_external_Hz != NULL)
+    free(pba->command_external_Hz);
+
+  if (pba->external_growth_z != NULL)
+    free(pba->external_growth_z);
+  if (pba->external_growth_D != NULL)
+    free(pba->external_growth_D);
+  if (pba->external_growth_ddD != NULL)
+    free(pba->external_growth_ddD);
+  if (pba->command_external_growth != NULL)
+    free(pba->command_external_growth);
 
   return _SUCCESS_;
 }

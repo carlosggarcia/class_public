@@ -169,6 +169,144 @@ static int input_read_external_Hz(struct precision * ppr,
 }
 
 /**
+ * Read a tabulated linear growth history D(z) from file.
+ * Expected format: two columns per non-comment line, z and D(z).
+ */
+static int input_read_external_growth(struct precision * ppr,
+                                      struct background * pba,
+                                      ErrorMsg errmsg) {
+
+  FILE * growth_file;
+  char line[_LINE_LENGTH_MAX_];
+  char resolved_file[_ARGUMENT_LENGTH_MAX_];
+  int status;
+  int capacity = 128;
+  int count = 0;
+  int i;
+  double z_val, D_val;
+  double D0;
+
+  class_test(pba->has_external_growth == _FALSE_,
+             errmsg,
+             "internal error: input_read_external_growth called while has_external_growth is false");
+
+  if (pba->command_external_growth != NULL) {
+    class_sprintf(resolved_file,"command: %s",pba->command_external_growth);
+    growth_file = popen(pba->command_external_growth, "r");
+    class_test(growth_file == NULL,
+               pba->error_message,
+               "The program failed to set the environment for the external growth command. Maybe you ran out of memory.");
+  }
+  else {
+    class_sprintf(resolved_file,"%s",pba->external_growth_file);
+    class_open(growth_file, pba->external_growth_file,"r",errmsg);
+  }
+
+  class_alloc(pba->external_growth_z,capacity*sizeof(double),errmsg);
+  class_alloc(pba->external_growth_D,capacity*sizeof(double),errmsg);
+  class_alloc(pba->external_growth_ddD,capacity*sizeof(double),errmsg);
+
+  while (fgets(line,_LINE_LENGTH_MAX_,growth_file) != NULL) {
+    if ((line[0] == '#') || (line[0] == '\n') || (line[0] == '\r')) {
+      continue;
+    }
+
+    status = sscanf(line,"%lf %lf",&z_val,&D_val);
+    class_test(status != 2,
+               errmsg,
+               "could not parse line '%s' in external_growth_file '%s': expected exactly two columns (z, D)",
+               line,
+               resolved_file);
+
+    class_test(z_val < 0.,
+               errmsg,
+               "external_growth_file '%s' contains negative redshift z=%g",
+               resolved_file,
+               z_val);
+    class_test(D_val <= 0.,
+               errmsg,
+               "external_growth_file '%s' contains non-positive D(z)=%g",
+               resolved_file,
+               D_val);
+
+    if (count == capacity) {
+      capacity *= 2;
+      class_realloc(pba->external_growth_z,capacity*sizeof(double),errmsg);
+      class_realloc(pba->external_growth_D,capacity*sizeof(double),errmsg);
+      class_realloc(pba->external_growth_ddD,capacity*sizeof(double),errmsg);
+    }
+
+    pba->external_growth_z[count] = z_val;
+    pba->external_growth_D[count] = D_val;
+    count++;
+  }
+
+  class_test(count < 2,
+             errmsg,
+             "external_growth_file '%s' must contain at least two valid rows",
+             resolved_file);
+
+  pba->external_growth_size = count;
+  class_realloc(pba->external_growth_z,count*sizeof(double),errmsg);
+  class_realloc(pba->external_growth_D,count*sizeof(double),errmsg);
+  class_realloc(pba->external_growth_ddD,count*sizeof(double),errmsg);
+
+  if (pba->command_external_growth != NULL) {
+    status = pclose(growth_file);
+    class_test(status == -1,
+               pba->error_message,
+               "The program failed to close the environment for the external growth command. Maybe you ran out of memory.");
+  }
+  else {
+    fclose(growth_file);
+  }
+
+  for (i=1; i<pba->external_growth_size; i++) {
+    class_test(pba->external_growth_z[i] <= pba->external_growth_z[i-1],
+               errmsg,
+               "external_growth must have strictly increasing z values; found z[%d]=%g after z[%d]=%g",
+               i,
+               pba->external_growth_z[i],
+               i-1,
+               pba->external_growth_z[i-1]);
+  }
+
+  class_test(pba->external_growth_z[0] != 0.,
+             errmsg,
+             "external_growth_file '%s' must include z=0 as first row to define D(0) consistently",
+             resolved_file);
+
+  class_test(fabs(pba->external_growth_z[0]) > 100.*ppr->smallest_allowed_variation,
+             errmsg,
+             "external_growth_file '%s' must include z=0 as first row to define D(0) consistently",
+             resolved_file);
+
+  D0 = pba->external_growth_D[0];
+  class_test(D0 <= 0.,
+             errmsg,
+             "external_growth_file '%s' must contain a strictly positive D(0)",
+             resolved_file);
+
+  for (i=0; i<pba->external_growth_size; i++) {
+    pba->external_growth_D[i] /= D0;
+  }
+
+  class_call(array_spline_table_lines(pba->external_growth_z,
+                                      pba->external_growth_size,
+                                      pba->external_growth_D,
+                                      1,
+                                      pba->external_growth_ddD,
+                                      _SPLINE_NATURAL_,
+                                      errmsg),
+             errmsg,
+             errmsg);
+
+  pba->external_growth_last_index = 0;
+
+  return _SUCCESS_;
+}
+
+/**
  * Initialize input parameters from external file.
  *
  * @param argc    Input: Number of command line arguments
@@ -2545,6 +2683,35 @@ int input_read_parameters_species(struct file_content * pfc,
 
   if (pba->has_external_Hz == _TRUE_) {
     class_call(input_read_external_Hz(ppr,pba,errmsg),
+               errmsg,
+               errmsg);
+  }
+
+  /** Optional: tabulated arbitrary linear growth D(z) */
+
+  class_call(parser_read_string(pfc,"external_growth_file",&string1,&flag1,errmsg),
+             errmsg,
+             errmsg);
+  if (flag1 == _TRUE_) {
+    class_sprintf(pba->external_growth_file,"%s",string1);
+    pba->has_external_growth = _TRUE_;
+  }
+
+  class_call(parser_read_string(pfc, "command_external_growth", &string1, &flag2, errmsg),
+             errmsg,
+             errmsg);
+  if (flag2 == _TRUE_) {
+    pba->command_external_growth = (char *) malloc (strlen(string1) + 1);
+    strcpy(pba->command_external_growth, string1);
+    pba->has_external_growth = _TRUE_;
+  }
+
+  class_test(((flag1 == _TRUE_) && (flag2 == _TRUE_)),
+             errmsg,
+             "You can only enter one of 'external_growth_file' or 'command_external_growth'.");
+
+  if (pba->has_external_growth == _TRUE_) {
+    class_call(input_read_external_growth(ppr,pba,errmsg),
                errmsg,
                errmsg);
   }
@@ -5941,6 +6108,7 @@ int input_default_params(struct background *pba,
   /** 5) Hubble parameter */
   pba->h = 0.67810;
   pba->H0 = pba->h*1.e5/_c_;
+  pba->command_external_Hz = NULL;
   pba->has_external_Hz = _FALSE_;
   pba->external_Hz_in_km_s_Mpc = _FALSE_;
   pba->external_Hz_file[0] = '\0';
@@ -5949,6 +6117,14 @@ int input_default_params(struct background *pba,
   pba->external_Hz_z = NULL;
   pba->external_Hz_H = NULL;
   pba->external_Hz_ddH = NULL;
+  pba->command_external_growth = NULL;
+  pba->has_external_growth = _FALSE_;
+  pba->external_growth_file[0] = '\0';
+  pba->external_growth_size = 0;
+  pba->external_growth_last_index = 0;
+  pba->external_growth_z = NULL;
+  pba->external_growth_D = NULL;
+  pba->external_growth_ddD = NULL;
 
   /** 6) Primordial Helium fraction */
   pth->YHe = _YHE_BBN_;

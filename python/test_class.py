@@ -112,6 +112,12 @@ COMPARE_PK_RELATIVE_ERROR_GAUGE = 5*1e-2
 COMPARE_PK_ABSOLUTE_ERROR = 1e-20
 COMPARE_SHOOTING_RELATIVE_ERROR = 1e-5
 
+EXTERNAL_GROWTH_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    'external',
+    'growth',
+    'growth_example.dat')
+
 # Dictionary of models to test the wrapper against. Each of these scenario will
 # be run against all the possible output choices (nothing, tCl, mPk, etc...),
 # with or without non-linearities.
@@ -436,6 +442,39 @@ class TestClass(unittest.TestCase):
             cosmo_ref.compute()
             self.compare_output(cosmo_ref, "Reference", self.cosmo_newt, 'Newtonian', COMPARE_CL_RELATIVE_ERROR, COMPARE_PK_RELATIVE_ERROR)
             assert status, 'Reference comparison failed in Newtonian gauge!'
+
+    @attr('test_external_growth')
+    def test_external_growth_linear_rescaling(self):
+        """Check that external D(z) enforces P(k,z)=D(z)^2 P(k,0)."""
+        settings = dict(self.verbose)
+        settings.update({
+            'output': 'mPk',
+            'P_k_max_1/Mpc': 2.0,
+            'z_max_pk': 5.0,
+            'external_growth_file': EXTERNAL_GROWTH_FILE,
+        })
+
+        self.cosmo.set(settings)
+        self.cosmo.compute()
+
+        k_values = np.logspace(-3, 0, 8)
+        z_values = np.array([0.0, 0.5, 1.0, 2.0, 3.0, 5.0])
+
+        for redshift in z_values:
+            expected_growth = 1.0 / (1.0 + redshift)
+            returned_growth = self.cosmo.scale_independent_growth_factor(redshift)
+            np.testing.assert_allclose(returned_growth,
+                                       expected_growth,
+                                       rtol=1e-10,
+                                       atol=0.0)
+
+            for k in k_values:
+                pk0 = self.cosmo.pk(k, 0.0)
+                pkz = self.cosmo.pk(k, redshift)
+                np.testing.assert_allclose(pkz / pk0,
+                                           expected_growth**2,
+                                           rtol=1e-8,
+                                           atol=0.0)
 
     def has_incompatible_input(self):
 

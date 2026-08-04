@@ -16,6 +16,36 @@
 #include "hmcode.h"
 
 /**
+ * Interpolate external D(z) for late-time linear power rescaling.
+ */
+static int fourier_external_growth_at_z(struct background * pba,
+                                        double z,
+                                        double * D) {
+
+  class_test((z < pba->external_growth_z[0]) || (z > pba->external_growth_z[pba->external_growth_size-1]),
+             pba->error_message,
+             "requested z=%g outside external D(z) range [%g, %g]",
+             z,
+             pba->external_growth_z[0],
+             pba->external_growth_z[pba->external_growth_size-1]);
+
+  class_call(array_interpolate_spline(pba->external_growth_z,
+                                      pba->external_growth_size,
+                                      pba->external_growth_D,
+                                      pba->external_growth_ddD,
+                                      1,
+                                      z,
+                                      &(pba->external_growth_last_index),
+                                      D,
+                                      1,
+                                      pba->error_message),
+             pba->error_message,
+             pba->error_message);
+
+  return _SUCCESS_;
+}
+
+/**
  * Return the P(k,z) for a given redshift z and pk type (_m, _cb)
  * (linear if pk_output = pk_linear, nonlinear if pk_output = pk_nonlinear,
  * nowiggle linear spectrum if pk_output = pk_numerical_nowiggle,
@@ -86,7 +116,10 @@ int fourier_pk_at_z(
   int index_ic2_ic2;
   int index_ic1_ic2;
   int last_index;
+  double D_external;
+  double growth_rescaling;
   short do_ic = _FALSE_;
+  short use_external_growth = _FALSE_;
 
   /** - check whether we need the decomposition into contributions from each initial condition */
 
@@ -95,14 +128,62 @@ int fourier_pk_at_z(
 
   class_test(pk_output == pk_nonlinear && pfo->method == nl_none, pfo->error_message, "Cannot get nonlinear power spectrum when no nonlinear method is employed");
 
+  class_test((pba->has_external_growth == _TRUE_)
+             && (pk_output == pk_nonlinear)
+             && (z > 0.)
+             && (z >= pba->external_growth_z[0])
+             && (z <= pba->external_growth_z[pba->external_growth_size-1]),
+             pfo->error_message,
+             "Cannot get nonlinear power spectrum at z=%e when external linear growth is enabled. Disable external_growth or request only linear spectra.",
+             z);
+
   class_test(pk_output == pk_numerical_nowiggle && pfo->has_pk_numerical_nowiggle == _FALSE_, pfo->error_message, "Cannot get nowiggle power spectrum since it was not requested in input");
 
   class_test(pk_output == pk_analytic_nowiggle && pfo->has_pk_analytic_nowiggle == _FALSE_, pfo->error_message, "Cannot get analytic nowiggle power spectrum since it was not requested in input");
 
+  if ((pba->has_external_growth == _TRUE_)
+      && ((pk_output == pk_linear) || (pk_output == pk_numerical_nowiggle))
+      && (z >= pba->external_growth_z[0])
+      && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
+    class_call(fourier_external_growth_at_z(pba,
+                                            z,
+                                            &D_external),
+               pba->error_message,
+               pfo->error_message);
+    growth_rescaling = 2.*log(D_external);
+    use_external_growth = _TRUE_;
+  }
+
+  if (use_external_growth == _TRUE_) {
+
+    if (pk_output == pk_linear) {
+      for (index_k=0; index_k<pfo->k_size; index_k++) {
+        out_pk[index_k] = pfo->ln_pk_l[index_pk][(pfo->ln_tau_size-1)*pfo->k_size+index_k] + growth_rescaling;
+
+        if (do_ic == _TRUE_) {
+          for (index_ic1_ic2 = 0; index_ic1_ic2 < pfo->ic_ic_size; index_ic1_ic2++) {
+            out_pk_ic[index_k * pfo->ic_ic_size + index_ic1_ic2] =
+              pfo->ln_pk_ic_l[index_pk][((pfo->ln_tau_size-1)*pfo->k_size+index_k)*pfo->ic_ic_size+index_ic1_ic2];
+          }
+
+          for (index_ic1=0; index_ic1 < pfo->ic_size; index_ic1++) {
+            index_ic1_ic1 = index_symmetric_matrix(index_ic1,index_ic1,pfo->ic_size);
+            out_pk_ic[index_k * pfo->ic_ic_size + index_ic1_ic1] += growth_rescaling;
+          }
+        }
+      }
+    }
+    else {
+      for (index_k=0; index_k<pfo->k_size; index_k++) {
+        out_pk[index_k] = pfo->ln_pk_l_nw_extra[(pfo->ln_tau_size-1)*pfo->k_size_extra+index_k] + growth_rescaling;
+      }
+    }
+  }
+
   /** - case z=0 requiring no interpolation in z. The
         pk_analytic_nowiggle can also be computed here because, in the
         current implementation, it is only computed at z=0. */
-  if ((z == 0) || (pk_output == pk_analytic_nowiggle)) {
+  else if ((z == 0) || (pk_output == pk_analytic_nowiggle)) {
 
     for (index_k=0; index_k<pfo->k_size; index_k++) {
 

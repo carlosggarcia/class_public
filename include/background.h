@@ -63,6 +63,10 @@ struct background
   short external_Hz_in_km_s_Mpc; /**< interpret input H(z) values in km/s/Mpc (otherwise in 1/Mpc) */
   FileArg external_Hz_file; /**< file containing two columns: z and H(z) */
 
+  char* command_external_growth;  /**< string with the command for calling external linear growth */
+  short has_external_growth; /**< use tabulated external D(z) to rescale the linear matter power spectrum where available */
+  FileArg external_growth_file; /**< file containing two columns: z and D(z) */
+
   double Omega0_g; /**< \f$ \Omega_{0 \gamma} \f$: photons */
   double T_cmb;    /**< \f$ T_{cmb} \f$: current CMB temperature in Kelvins */
 
@@ -246,6 +250,12 @@ struct background
   double * external_Hz_z; /**< redshift sampling for external H(z) */
   double * external_Hz_H; /**< H(z) values in CLASS units [1/Mpc] */
   double * external_Hz_ddH; /**< spline second derivatives of H(z) */
+
+  int external_growth_size; /**< number of rows in external growth table */
+  int external_growth_last_index; /**< cached index for spline interpolation in external growth table */
+  double * external_growth_z; /**< redshift sampling for external growth */
+  double * external_growth_D; /**< growth values D(z), normalized to D(0)=1 */
+  double * external_growth_ddD; /**< spline second derivatives of D(z) */
 
   //@}
 
