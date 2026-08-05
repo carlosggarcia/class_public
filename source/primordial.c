@@ -3245,15 +3245,17 @@ int primordial_external_spectrum_init(
     pkt = (double *)malloc(n_data_guess*sizeof(double));
   /* Prepare the command */
   /* If the command is just a "cat", no arguments need to be passed */
-  if (strncmp("cat ", ppm->command, 4) == 0) {
-    class_sprintf(arguments, " ");
-  }
-  /* otherwise pass the list of arguments */
-  else {
-    class_sprintf(arguments, " %g %g %g %g %g %g %g %g %g %g",
-            ppm->custom1, ppm->custom2, ppm->custom3, ppm->custom4, ppm->custom5,
-            ppm->custom6, ppm->custom7, ppm->custom8, ppm->custom9, ppm->custom10);
-  }
+  // if (strncmp("cat ", ppm->command, 4) == 0) {
+  //   class_sprintf(arguments, " ");
+  // }
+  // /* otherwise pass the list of arguments */
+  // else {
+  //   class_sprintf(arguments, " %g %g %g %g %g %g %g %g %g %g",
+  //           ppm->custom1, ppm->custom2, ppm->custom3, ppm->custom4, ppm->custom5,
+  //           ppm->custom6, ppm->custom7, ppm->custom8, ppm->custom9, ppm->custom10);
+  // }
+  /* Always use the command as is. Check comment in input.c */
+  class_sprintf(arguments, "");
   /* write the actual command in a string */
   class_sprintf(command_with_arguments, "%s %s", ppm->command, arguments);
   if (ppm->primordial_verbose > 0)

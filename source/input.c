@@ -95,7 +95,7 @@ static int input_read_external_Hz(struct precision * ppr,
     }
 
     pba->external_Hz_z[count] = z_val;
-    
+
     if (pba->external_Hz_in_km_s_Mpc == _TRUE_) {
       pba->external_Hz_H[count] = H_val*1.e3/_c_;
     }
@@ -5000,16 +5000,20 @@ int input_read_parameters_primordial(struct file_content * pfc,
 
     /** 1.g.2) Command generating the table */
     /* Read */
-    class_read_double("custom1",ppm->custom1);
-    class_read_double("custom2",ppm->custom2);
-    class_read_double("custom3",ppm->custom3);
-    class_read_double("custom4",ppm->custom4);
-    class_read_double("custom5",ppm->custom5);
-    class_read_double("custom6",ppm->custom6);
-    class_read_double("custom7",ppm->custom7);
-    class_read_double("custom8",ppm->custom8);
-    class_read_double("custom9",ppm->custom9);
-    class_read_double("custom10",ppm->custom10);
+    /* NOTE: Commented out since in Cobaya I can pass an arbitrary number of
+             parameters and because these are always passed, so the spline
+             would always use 9 nodes. This induces to error.
+    */
+    // class_read_double("custom1",ppm->custom1);
+    // class_read_double("custom2",ppm->custom2);
+    // class_read_double("custom3",ppm->custom3);
+    // class_read_double("custom4",ppm->custom4);
+    // class_read_double("custom5",ppm->custom5);
+    // class_read_double("custom6",ppm->custom6);
+    // class_read_double("custom7",ppm->custom7);
+    // class_read_double("custom8",ppm->custom8);
+    // class_read_double("custom9",ppm->custom9);
+    // class_read_double("custom10",ppm->custom10);
   }
 
   /* Final tests */
