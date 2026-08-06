@@ -111,10 +111,7 @@ int fourier_pk_at_z(
   int index_ic2_ic2;
   int index_ic1_ic2;
   int last_index;
-  double D_external;
-  double growth_rescaling;
   short do_ic = _FALSE_;
-  short use_external_growth = _FALSE_;
 
   /** - check whether we need the decomposition into contributions from each initial condition */
 
@@ -130,49 +127,10 @@ int fourier_pk_at_z(
 
   class_test(pk_output == pk_analytic_nowiggle && pfo->has_pk_analytic_nowiggle == _FALSE_, pfo->error_message, "Cannot get analytic nowiggle power spectrum since it was not requested in input");
 
-  if ((pba->has_external_growth == _TRUE_)
-      && ((pk_output == pk_linear) || (pk_output == pk_numerical_nowiggle))) {
-    class_call(fourier_external_growth_corr_factor_at_z(pba,
-                                            z,
-                                            &D_external),
-               pba->error_message,
-               pfo->error_message);
-    if (D_external != 1.0) {
-      growth_rescaling = 2.*log(D_external);
-      use_external_growth = _TRUE_;
-    }
-  }
-
-  if (use_external_growth == _TRUE_) {
-
-    if (pk_output == pk_linear) {
-      for (index_k=0; index_k<pfo->k_size; index_k++) {
-        out_pk[index_k] = pfo->ln_pk_l[index_pk][(pfo->ln_tau_size-1)*pfo->k_size+index_k] + growth_rescaling;
-
-        if (do_ic == _TRUE_) {
-          for (index_ic1_ic2 = 0; index_ic1_ic2 < pfo->ic_ic_size; index_ic1_ic2++) {
-            out_pk_ic[index_k * pfo->ic_ic_size + index_ic1_ic2] =
-              pfo->ln_pk_ic_l[index_pk][((pfo->ln_tau_size-1)*pfo->k_size+index_k)*pfo->ic_ic_size+index_ic1_ic2];
-          }
-
-          for (index_ic1=0; index_ic1 < pfo->ic_size; index_ic1++) {
-            index_ic1_ic1 = index_symmetric_matrix(index_ic1,index_ic1,pfo->ic_size);
-            out_pk_ic[index_k * pfo->ic_ic_size + index_ic1_ic1] += growth_rescaling;
-          }
-        }
-      }
-    }
-    else {
-      for (index_k=0; index_k<pfo->k_size; index_k++) {
-        out_pk[index_k] = pfo->ln_pk_l_nw_extra[(pfo->ln_tau_size-1)*pfo->k_size_extra+index_k] + growth_rescaling;
-      }
-    }
-  }
-
   /** - case z=0 requiring no interpolation in z. The
         pk_analytic_nowiggle can also be computed here because, in the
         current implementation, it is only computed at z=0. */
-  else if ((z == 0) || (pk_output == pk_analytic_nowiggle)) {
+  if ((z == 0) || (pk_output == pk_analytic_nowiggle)) {
 
     for (index_k=0; index_k<pfo->k_size; index_k++) {
 
@@ -1684,20 +1642,6 @@ int fourier_init(
                      pfo->error_message,
                      pfo->error_message);
 
-          /* Apply external growth rescaling via D_ext_corr_factor from background table. */
-          if (pba->has_external_growth == _TRUE_) {
-            double D_ext_corr;
-            class_alloc(pvecback, pba->bg_size*sizeof(double), pfo->error_message);
-            class_call(background_at_tau(pba, pfo->tau[index_tau], long_info, inter_normal, &last_index, pvecback),
-                       pba->error_message, pfo->error_message);
-            D_ext_corr = pvecback[pba->index_bg_D_ext_corr_factor];
-            free(pvecback);
-            if (D_ext_corr != 1.0) {
-              for (index_k=0; index_k<pfo->k_size_extra; index_k++)
-                lnpk_l[index_pk][index_k] += 2.*log(D_ext_corr);
-            }
-          }
-
           /* spline P_L(k) at this time along k */
           class_call(array_spline_table_columns(pfo->ln_k,
                                                 pfo->k_size_extra,
@@ -2432,6 +2376,7 @@ int fourier_pk_linear(
   double source_ic1;
   double source_ic2;
   double cosine_correlation;
+  double growth_rescaling = 1;  // for when external growth is provided
 
   /** - allocate temporary vector where the primordial spectrum will be stored */
 
@@ -2448,6 +2393,32 @@ int fourier_pk_linear(
   else {
     class_stop(pfo->error_message,"P(k) is set neither to total matter nor to cold dark matter + baryons");
   }
+
+  /** - If external growth has been provided, modify the Pk's accordingly - **/
+    if (pba->has_external_growth == _TRUE_) {
+
+      double D_ext_corr;
+      double * pvecback;
+      int last_index;
+
+      class_alloc(pvecback, pba->bg_size*sizeof(double), pfo->error_message);
+
+      class_call(background_at_tau(pba,
+                                    ppt->tau_sampling[index_tau],
+                                    // exp(pfo->ln_tau[index_tau]),
+                                    long_info,
+                                    inter_normal,
+                                    &last_index,
+                                    pvecback),
+                  pba->error_message,
+                  pfo->error_message);
+
+      D_ext_corr = pvecback[pba->index_bg_D_ext_corr_factor];
+      growth_rescaling = pow(D_ext_corr, 2);
+
+      free(pvecback);
+    }
+
 
   /** - loop over k values */
 
@@ -2491,7 +2462,8 @@ int fourier_pk_linear(
 
       pk_ic[index_ic1_ic1] = 2.*_PI_*_PI_/exp(3.*pfo->ln_k[index_k])
         *source_ic1*source_ic1
-        *exp(primordial_pk[index_ic1_ic1]);
+        *exp(primordial_pk[index_ic1_ic1])
+        *growth_rescaling;
 
       pk += pk_ic[index_ic1_ic1];
 
