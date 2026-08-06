@@ -281,15 +281,13 @@ static int input_read_external_growth(struct precision * ppr,
              "external_growth_file '%s' must include z=0 as first row to define D(0) consistently",
              resolved_file);
 
+  /* Normalize the growth function to D(0) = 1 in background.c after the
+     correction factor (D_external / D_internal) is computed. */
   D0 = pba->external_growth_D[0];
   class_test(D0 <= 0.,
-             errmsg,
-             "external_growth_file '%s' must contain a strictly positive D(0)",
-             resolved_file);
-
-  for (i=0; i<pba->external_growth_size; i++) {
-    pba->external_growth_D[i] /= D0;
-  }
+              errmsg,
+              "external_growth_file '%s' must contain a strictly positive D(0)",
+              resolved_file);
 
   class_call(array_spline_table_lines(pba->external_growth_z,
                                       pba->external_growth_size,

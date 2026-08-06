@@ -324,8 +324,7 @@ int background_at_z(
                pba->error_message);
   }
 
-  if ((return_format == long_info)
-      && (pba->has_external_growth == _TRUE_)
+  if ((pba->has_external_growth == _TRUE_)
       && (z >= pba->external_growth_z[0])
       && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
     double D_ext;
@@ -337,6 +336,11 @@ int background_at_z(
                                                &dD_dz_ext),
                pba->error_message,
                pba->error_message);
+
+    pvecback[pba->index_bg_D_ext_corr_factor] = D_ext / pvecback[pba->index_bg_D];
+
+    /* Normalize the external growth, after computing the correction factor */
+    D_ext /= pba->external_growth_D[0];
 
     pvecback[pba->index_bg_D] = D_ext;
     pvecback[pba->index_bg_f] = -(1.+z)*dD_dz_ext/D_ext;
@@ -786,6 +790,9 @@ int background_functions(
 
     /** - velocity growth factor */
     pvecback[pba->index_bg_f] = pvecback_B[pba->index_bi_D_prime]/( pvecback_B[pba->index_bi_D]*a*pvecback[pba->index_bg_H]);
+
+    /* default: no rescaling; overridden in background_at_z when external growth is active */
+    pvecback[pba->index_bg_D_ext_corr_factor] = 1.0;
 
     /**- Varying fundamental constants */
     if (pba->has_varconst == _TRUE_) {
@@ -1314,6 +1321,9 @@ int background_indices(
 
   /* -> velocity growth factor in dust universe */
   class_define_index(pba->index_bg_f,_TRUE_,index_bg,1);
+
+  /* -> ratio D_external/D_internal for rescaling linear P(k,z) */
+  class_define_index(pba->index_bg_D_ext_corr_factor,_TRUE_,index_bg,1);
 
   /* -> varying fundamental constant -- alpha (fine structure) */
   class_define_index(pba->index_bg_varc_alpha,pba->has_varconst,index_bg,1);
@@ -2192,6 +2202,21 @@ int background_solve(
     pba->background_table[index_loga*pba->bg_size+pba->index_bg_lum_distance] = comoving_radius*(1.+pba->z_table[index_loga]);
   }
 
+  /* Fill D_ext_corr_factor on the internal grid; d2background_dloga2_table provides the spline. */
+  if (pba->has_external_growth == _TRUE_) {
+    double D_ext_i, dD_dz_ext_i;
+    for (index_loga = 0; index_loga < pba->bt_size; index_loga++) {
+      double z_i = pba->z_table[index_loga];
+      if ((z_i >= pba->external_growth_z[0]) &&
+          (z_i <= pba->external_growth_z[pba->external_growth_size-1])) {
+        double D_int_i = pba->background_table[index_loga*pba->bg_size + pba->index_bg_D];
+        class_call(background_external_growth_at_z(pba, z_i, &D_ext_i, &dD_dz_ext_i),
+                   pba->error_message, pba->error_message);
+        pba->background_table[index_loga*pba->bg_size + pba->index_bg_D_ext_corr_factor] = D_ext_i / D_int_i;
+      }
+    }
+  }
+
   /** - fill tables of second derivatives (in view of spline interpolation) */
   class_call(array_spline_table_lines(pba->z_table,
                                       pba->bt_size,
@@ -2655,6 +2680,9 @@ int background_output_titles(
   class_store_columntitle(titles,"Omega_m(z)",_TRUE_);
 
   class_store_columntitle(titles,"gr.fac. D",_TRUE_);
+  if (pba->has_external_growth == _TRUE_) {
+    class_store_columntitle(titles,"gr.fac. D external. corr. factor",_TRUE_);
+  }
   class_store_columntitle(titles,"gr.fac. f",_TRUE_);
 
   class_store_columntitle(titles,"rel. alpha",pba->has_varconst);
@@ -2731,6 +2759,9 @@ int background_output_data(
     class_store_double(dataptr,pvecback[pba->index_bg_Omega_m],_TRUE_,storeidx);
 
     class_store_double(dataptr,pvecback[pba->index_bg_D],_TRUE_,storeidx);
+    if (pba->has_external_growth == _TRUE_) {
+      class_store_double(dataptr,pvecback[pba->index_bg_D_ext_corr_factor],_TRUE_,storeidx);
+    }
     class_store_double(dataptr,pvecback[pba->index_bg_f],_TRUE_,storeidx);
 
     class_store_double(dataptr,pvecback[pba->index_bg_varc_alpha],pba->has_varconst,storeidx);

@@ -213,6 +213,7 @@ struct background
 
   int index_bg_D;             /**< scale independent growth factor D(a) for CDM perturbations */
   int index_bg_f;             /**< corresponding velocity growth factor [dlnD]/[dln a] */
+  int index_bg_D_ext_corr_factor;  /**< D_external/D_internal; equals 1 when no external growth table is provided */
 
   int index_bg_varc_alpha;    /**< value of fine structure constant in varying fundamental constants */
   int index_bg_varc_me;      /**< value of effective electron mass in varying fundamental constants */
@@ -254,8 +255,9 @@ struct background
   int external_growth_size; /**< number of rows in external growth table */
   int external_growth_last_index; /**< cached index for spline interpolation in external growth table */
   double * external_growth_z; /**< redshift sampling for external growth */
-  double * external_growth_D; /**< growth values D(z), normalized to D(0)=1 */
+  double * external_growth_D; /**< growth values D(z), NOT normalized to D(0)=1 */
   double * external_growth_ddD; /**< spline second derivatives of D(z) */
+
 
   //@}
 

@@ -18,24 +18,19 @@
 /**
  * Interpolate external D(z) for late-time linear power rescaling.
  */
-static int fourier_external_growth_at_z(struct background * pba,
+static int fourier_external_growth_corr_factor_at_z(struct background * pba,
                                         double z,
                                         double * D) {
+  int last_index = 0;
+  double loga = -log(1. + z);
 
-  class_test((z < pba->external_growth_z[0]) || (z > pba->external_growth_z[pba->external_growth_size-1]),
-             pba->error_message,
-             "requested z=%g outside external D(z) range [%g, %g]",
-             z,
-             pba->external_growth_z[0],
-             pba->external_growth_z[pba->external_growth_size-1]);
-
-  class_call(array_interpolate_spline(pba->external_growth_z,
-                                      pba->external_growth_size,
-                                      pba->external_growth_D,
-                                      pba->external_growth_ddD,
-                                      1,
-                                      z,
-                                      &(pba->external_growth_last_index),
+  class_call(array_interpolate_spline(pba->loga_table,
+                                      pba->bt_size,
+                                      pba->background_table + pba->index_bg_D_ext_corr_factor,
+                                      pba->d2background_dloga2_table + pba->index_bg_D_ext_corr_factor,
+                                      pba->bg_size,
+                                      loga,
+                                      &last_index,
                                       D,
                                       1,
                                       pba->error_message),
@@ -128,30 +123,24 @@ int fourier_pk_at_z(
 
   class_test(pk_output == pk_nonlinear && pfo->method == nl_none, pfo->error_message, "Cannot get nonlinear power spectrum when no nonlinear method is employed");
 
-  class_test((pba->has_external_growth == _TRUE_)
-             && (pk_output == pk_nonlinear)
-             && (z > 0.)
-             && (z >= pba->external_growth_z[0])
-             && (z <= pba->external_growth_z[pba->external_growth_size-1]),
-             pfo->error_message,
-             "Cannot get nonlinear power spectrum at z=%e when external linear growth is enabled. Disable external_growth or request only linear spectra.",
-             z);
+  /* External growth is now applied to lnpk_l before Halofit/HMcode in fourier_init;
+     nonlinear spectra with external_growth are therefore supported. */
 
   class_test(pk_output == pk_numerical_nowiggle && pfo->has_pk_numerical_nowiggle == _FALSE_, pfo->error_message, "Cannot get nowiggle power spectrum since it was not requested in input");
 
   class_test(pk_output == pk_analytic_nowiggle && pfo->has_pk_analytic_nowiggle == _FALSE_, pfo->error_message, "Cannot get analytic nowiggle power spectrum since it was not requested in input");
 
   if ((pba->has_external_growth == _TRUE_)
-      && ((pk_output == pk_linear) || (pk_output == pk_numerical_nowiggle))
-      && (z >= pba->external_growth_z[0])
-      && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
-    class_call(fourier_external_growth_at_z(pba,
+      && ((pk_output == pk_linear) || (pk_output == pk_numerical_nowiggle))) {
+    class_call(fourier_external_growth_corr_factor_at_z(pba,
                                             z,
                                             &D_external),
                pba->error_message,
                pfo->error_message);
-    growth_rescaling = 2.*log(D_external);
-    use_external_growth = _TRUE_;
+    if (D_external != 1.0) {
+      growth_rescaling = 2.*log(D_external);
+      use_external_growth = _TRUE_;
+    }
   }
 
   if (use_external_growth == _TRUE_) {
@@ -1694,6 +1683,20 @@ int fourier_init(
                                        NULL),
                      pfo->error_message,
                      pfo->error_message);
+
+          /* Apply external growth rescaling via D_ext_corr_factor from background table. */
+          if (pba->has_external_growth == _TRUE_) {
+            double D_ext_corr;
+            class_alloc(pvecback, pba->bg_size*sizeof(double), pfo->error_message);
+            class_call(background_at_tau(pba, pfo->tau[index_tau], long_info, inter_normal, &last_index, pvecback),
+                       pba->error_message, pfo->error_message);
+            D_ext_corr = pvecback[pba->index_bg_D_ext_corr_factor];
+            free(pvecback);
+            if (D_ext_corr != 1.0) {
+              for (index_k=0; index_k<pfo->k_size_extra; index_k++)
+                lnpk_l[index_pk][index_k] += 2.*log(D_ext_corr);
+            }
+          }
 
           /* spline P_L(k) at this time along k */
           class_call(array_spline_table_columns(pfo->ln_k,
