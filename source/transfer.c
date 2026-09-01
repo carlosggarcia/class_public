@@ -2348,6 +2348,11 @@ int transfer_sources(
   /* rescaling factor depending on the background at a given time */
   double rescaling=0.;
 
+  /* external-growth correction to the lensing-potential transfer */
+  double external_growth_correction=1.;
+  double * pvecback = NULL;
+  int last_index = 0;
+
   /* flag: is there any difference between the perturbation and transfer source? */
   short redefine_source;
 
@@ -2398,11 +2403,26 @@ int transfer_sources(
         /* first time step after removing early times */
         index_tau_min =  ppt->tau_size - tau_size;
 
+        if (pba->has_external_growth == _TRUE_)
+          class_alloc(pvecback,pba->bg_size*sizeof(double),ptr->error_message);
+
         /* loop over time and rescale */
         for (index_tau = index_tau_min; index_tau < ppt->tau_size; index_tau++) {
 
           /* conformal time */
           tau = ppt->tau_sampling[index_tau];
+
+          if (pba->has_external_growth == _TRUE_) {
+            class_call(background_at_tau(pba,
+                                         tau,
+                                         long_info,
+                                         inter_normal,
+                                         &last_index,
+                                         pvecback),
+                       pba->error_message,
+                       ptr->error_message);
+            external_growth_correction = pvecback[pba->index_bg_D_ext_corr_factor];
+          }
 
           /* lensing source =  - W(tau) (phi(k,tau) + psi(k,tau)) Heaviside(tau-tau_rec)
              with
@@ -2441,6 +2461,7 @@ int transfer_sources(
           sources[index_tau-index_tau_min] =
             interpolated_sources[index_tau]
             * rescaling
+            * external_growth_correction
             * ptr->lcmb_rescale
             * pow(k/ptr->lcmb_pivot,ptr->lcmb_tilt);
 
@@ -2456,6 +2477,8 @@ int transfer_sources(
                                               ptr->error_message),
                    ptr->error_message,
                    ptr->error_message);
+
+        free(pvecback);
       }
 
       /* Non-integrated contributions to dCl/nCl need selection time sampling*/
