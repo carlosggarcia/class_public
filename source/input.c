@@ -2712,6 +2712,8 @@ int input_read_parameters_species(struct file_content * pfc,
     class_call(input_read_external_growth(ppr,pba,errmsg),
                errmsg,
                errmsg);
+    /* with temperature Cls, require the table to extend beyond z_rec? */
+    class_read_flag("external_growth_beyond_z_rec",pba->external_growth_beyond_z_rec);
   }
 
   /* Complete set of parameters */
@@ -6121,6 +6123,7 @@ int input_default_params(struct background *pba,
   pba->external_Hz_ddH = NULL;
   pba->command_external_growth = NULL;
   pba->has_external_growth = _FALSE_;
+  pba->external_growth_beyond_z_rec = _FALSE_;
   pba->external_growth_file[0] = '\0';
   pba->external_growth_size = 0;
   pba->external_growth_last_index = 0;

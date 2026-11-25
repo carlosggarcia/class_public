@@ -66,6 +66,7 @@ struct background
   char* command_external_growth;  /**< string with the command for calling external linear growth */
   short has_external_growth; /**< use tabulated external D(z) to rescale the linear matter power spectrum where available */
   FileArg external_growth_file; /**< file containing two columns: z and D(z) */
+  short external_growth_beyond_z_rec; /**< if _TRUE_ and temperature Cls are requested, require the external D(z) table to extend to z >= z_rec */
 
   double Omega0_g; /**< \f$ \Omega_{0 \gamma} \f$: photons */
   double T_cmb;    /**< \f$ T_{cmb} \f$: current CMB temperature in Kelvins */
@@ -214,6 +215,7 @@ struct background
   int index_bg_D;             /**< scale independent growth factor D(a) for CDM perturbations */
   int index_bg_f;             /**< corresponding velocity growth factor [dlnD]/[dln a] */
   int index_bg_D_ext_corr_factor;  /**< D_external/D_internal; equals 1 when no external growth table is provided */
+  int index_bg_D_ext_corr_dlna;    /**< dln(D_external/D_internal)/dlna = f_external - f_internal; equals 0 when no external growth table is provided */
 
   int index_bg_varc_alpha;    /**< value of fine structure constant in varying fundamental constants */
   int index_bg_varc_me;      /**< value of effective electron mass in varying fundamental constants */

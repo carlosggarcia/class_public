@@ -759,6 +759,13 @@ extern "C" {
                          struct perturbations * ppt
                          );
 
+  int perturbations_check_external_growth_edges(
+                                                struct precision * ppr,
+                                                struct background * pba,
+                                                struct thermodynamics * pth,
+                                                struct perturbations * ppt
+                                                );
+
   int perturbations_free_input(
                                struct perturbations * ppt
                                );

@@ -689,6 +689,90 @@ int perturbations_output_firstline_and_ic_suffix(
  * @return the error status
  */
 
+/**
+ * With external growth and temperature Cls, the ISW source is rescaled
+ * by c=D_external/D_internal inside the external table range only (c=1
+ * outside). A jump of c at a table edge at z < z_rec would show up as a
+ * spurious late-time ISW contribution, so require c=1 (within
+ * external_growth_edge_tolerance) at such edges. Edges at z >= z_rec are
+ * not checked. If external_growth_beyond_z_rec is set, additionally
+ * require the table to extend to z >= z_rec, i.e. to be defined at all
+ * z < z_rec.
+ *
+ * @param ppr Input: pointer to precision structure
+ * @param pba Input: pointer to background structure
+ * @param pth Input: pointer to thermodynamics structure (for z_rec)
+ * @param ppt Input/Output: pointer to perturbation structure (for error message)
+ * @return the error status
+ */
+
+int perturbations_check_external_growth_edges(
+                                              struct precision * ppr,
+                                              struct background * pba,
+                                              struct thermodynamics * pth,
+                                              struct perturbations * ppt
+                                              ) {
+
+  double * pvecback;
+  double z_edge[2];
+  int n_edge, index_edge;
+  int last_index=0;
+  double c_edge;
+  double z_min = pba->external_growth_z[0];
+  double z_max = pba->external_growth_z[pba->external_growth_size-1];
+
+  /* optionally, the external D(z) must be defined at all z < z_rec */
+  class_test((pba->external_growth_beyond_z_rec == _TRUE_) && (z_max < pth->z_rec),
+             ppt->error_message,
+             "external_growth_beyond_z_rec = yes: the external D(z) table must extend beyond recombination, but its maximum z=%g is below z_rec=%g. Extend the table to z >= z_rec, or set external_growth_beyond_z_rec = no",
+             z_max,
+             pth->z_rec);
+
+  /* no edge at z_min if the table extends to today; edges at z >= z_rec
+     are not checked (no late-time ISW from a jump there) */
+  n_edge = 0;
+  if ((z_min > 0.) && (z_min < pth->z_rec))
+    z_edge[n_edge++] = z_min;
+  if (z_max < pth->z_rec)
+    z_edge[n_edge++] = z_max;
+  else if (ppt->perturbations_verbose > 0)
+    printf(" -> external growth: table edge z=%g >= z_rec=%g, continuity of D_external/D_internal not enforced there\n",
+           z_max,pth->z_rec);
+
+  if (n_edge == 0)
+    return _SUCCESS_;
+
+  class_alloc(pvecback,pba->bg_size*sizeof(double),ppt->error_message);
+
+  for (index_edge=0; index_edge<n_edge; index_edge++) {
+
+    class_call(background_at_z(pba,
+                               z_edge[index_edge],
+                               long_info,
+                               inter_normal,
+                               &last_index,
+                               pvecback),
+               pba->error_message,
+               ppt->error_message);
+
+    c_edge = pvecback[pba->index_bg_D_ext_corr_factor];
+
+    if (ppt->perturbations_verbose > 0)
+      printf(" -> external growth: D_external/D_internal = %.6e at table edge z=%g\n",c_edge,z_edge[index_edge]);
+
+    class_test(fabs(c_edge-1.) > ppr->external_growth_edge_tolerance,
+               ppt->error_message,
+               "D_external/D_internal = %e at the edge z=%g of the external D(z) table: the jump to 1 outside the table would create a spurious ISW contribution. Normalize the external D(z) consistently with the internal one (normalized to D(z=0)=1), extend the table beyond z_rec, or loosen external_growth_edge_tolerance (currently %e)",
+               c_edge,
+               z_edge[index_edge],
+               ppr->external_growth_edge_tolerance);
+  }
+
+  free(pvecback);
+
+  return _SUCCESS_;
+}
+
 int perturbations_init(
                        struct precision * ppr,
                        struct background * pba,
@@ -856,6 +940,17 @@ int perturbations_init(
                                    ppt),
              ppt->error_message,
              ppt->error_message);
+
+  /** - with external growth, the ISW source is rescaled by
+      c=D_external/D_internal inside the external table range only. A
+      jump of c at a table edge at z < z_rec would show up as a spurious
+      ISW spike, so require c=1 there; optionally require the table to
+      extend beyond z_rec (external_growth_beyond_z_rec). */
+  if ((pba->has_external_growth == _TRUE_) && (ppt->has_source_t == _TRUE_)) {
+    class_call(perturbations_check_external_growth_edges(ppr,pba,pth,ppt),
+               ppt->error_message,
+               ppt->error_message);
+  }
 
 
   if (ppt->z_max_pk > pth->z_rec) {
@@ -7465,6 +7560,8 @@ int perturbations_sources(
   double dkappa, ddkappa, exp_m_kappa, g, g_prime;
   double theta_idm = 0., theta_idm_prime = 0.;
   double dmu_idm_g = 0., ddmu_idm_g = 0., exp_mu_idm_g = 0.;
+  double c_ext, dlnc_ext_dlna, phi_N, psi_N, phi_N_prime;
+  double isw_ext_corr_t0 = 0., isw_ext_corr_t1 = 0.;
   /** - rename structure fields (just to avoid heavy notations) */
 
   pppaw = (struct perturbations_parameters_and_workspace *)parameters_and_workspace;
@@ -7484,9 +7581,10 @@ int perturbations_sources(
 
   /** - get background/thermo quantities in this point */
 
+  /* long_info is needed with external growth to get D_external/D_internal */
   class_call(background_at_tau(pba,
                                tau,
-                               normal_info,
+                               (pba->has_external_growth == _TRUE_) ? long_info : normal_info,
                                inter_closeby,
                                &(ppw->last_index_back),
                                pvecback),
@@ -7579,6 +7677,48 @@ int perturbations_sources(
         switch_isw=0;
       }
 
+      /* external growth: within the external D(z) table range, the
+         Bardeen potentials are rescaled as phi -> c phi, psi -> c psi
+         with c = D_external/D_internal, so that phi' -> c (phi' + a'/a
+         dlnc/dlna phi). The ISW terms below read g (phi-psi) + 2
+         e^-kappa phi' (t0) and e^-kappa k (psi-phi) (t1) in both
+         gauges; we add the difference between rescaled and original
+         terms. The edges of the table are checked in perturbations_init
+         to have c=1. */
+      if ((pba->has_external_growth == _TRUE_)
+          && (z >= pba->external_growth_z[0])
+          && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
+
+        c_ext = pvecback[pba->index_bg_D_ext_corr_factor];
+        dlnc_ext_dlna = pvecback[pba->index_bg_D_ext_corr_dlna];
+
+        if (ppt->gauge == newtonian) {
+          phi_N = y[ppw->pv->index_pt_phi];
+          psi_N = pvecmetric[ppw->index_mt_psi];
+          phi_N_prime = pvecmetric[ppw->index_mt_phi_prime];
+        }
+        else {
+          phi_N = y[ppw->pv->index_pt_eta] - a_prime_over_a * pvecmetric[ppw->index_mt_alpha];
+          psi_N = pvecmetric[ppw->index_mt_alpha_prime] + a_prime_over_a * pvecmetric[ppw->index_mt_alpha];
+          phi_N_prime = pvecmetric[ppw->index_mt_eta_prime]
+            - a_prime_over_a_prime * pvecmetric[ppw->index_mt_alpha]
+            - a_prime_over_a * pvecmetric[ppw->index_mt_alpha_prime];
+        }
+
+        isw_ext_corr_t0 = switch_isw * ( (c_ext-1.) * g * (phi_N-psi_N)
+                                         + exp_m_kappa * 2. * ((c_ext-1.) * phi_N_prime
+                                                               + c_ext * a_prime_over_a * dlnc_ext_dlna * phi_N) );
+        isw_ext_corr_t1 = switch_isw * (c_ext-1.) * exp_m_kappa * k * (psi_N-phi_N);
+
+        if (pth->has_idm_g == _TRUE_) {
+          /* the g (phi-psi) part does not carry exp_mu_idm_g */
+          isw_ext_corr_t0 = switch_isw * ( (c_ext-1.) * g * (phi_N-psi_N)
+                                           + exp_m_kappa * exp_mu_idm_g * 2. * ((c_ext-1.) * phi_N_prime
+                                                                                + c_ext * a_prime_over_a * dlnc_ext_dlna * phi_N) );
+          isw_ext_corr_t1 *= exp_mu_idm_g;
+        }
+      }
+
       /* newtonian gauge: simplest form, not efficient numerically */
       /*
         if (ppt->gauge == newtonian) {
@@ -7613,6 +7753,9 @@ int perturbations_sources(
         }
 
         _set_source_(ppt->index_tp_t2) = ppt->switch_pol * g * P;
+
+        _set_source_(ppt->index_tp_t0) += isw_ext_corr_t0;
+        _set_source_(ppt->index_tp_t1) += isw_ext_corr_t1;
       }
 
 
@@ -7675,6 +7818,9 @@ int perturbations_sources(
         }
         _set_source_(ppt->index_tp_t2) =
           ppt->switch_pol * g * P;
+
+        _set_source_(ppt->index_tp_t0) += isw_ext_corr_t0;
+        _set_source_(ppt->index_tp_t1) += isw_ext_corr_t1;
       }
 
     }

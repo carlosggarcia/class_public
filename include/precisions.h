@@ -487,6 +487,8 @@ class_precision_parameter(transfer_neglect_delta_k_T_b,double,0.1)  /**< same fo
 
 class_precision_parameter(transfer_neglect_late_source,double,400.0)  /**< value of l below which the CMB source functions can be neglected at late time, excepted when there is a Late ISW contribution */
 
+class_precision_parameter(external_growth_edge_tolerance,double,1.e-3) /**< maximum allowed |D_external/D_internal - 1| at the edges of the external D(z) table when temperature sources are requested (a jump there produces a spurious ISW spike) */
+
 class_precision_parameter(l_switch_limber,double,10.) /**< when to use the Limber approximation for project gravitational potential cl's */
 // For density Cl, we recommend not to use the Limber approximation
 // at all, and hence to put here a very large number (e.g. 10000); but

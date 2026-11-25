@@ -185,6 +185,10 @@ static int background_external_growth_at_z(struct background * pba,
   double h;
   double a;
   double b;
+  /* local (not pba->external_growth_last_index): this function is
+     called from background_at_z inside OpenMP-parallel loops, and the
+     index is read back below to compute dD/dz */
+  int last_index = 0;
 
   class_test((z < pba->external_growth_z[0]) || (z > pba->external_growth_z[pba->external_growth_size-1]),
              pba->error_message,
@@ -199,14 +203,14 @@ static int background_external_growth_at_z(struct background * pba,
                                       pba->external_growth_ddD,
                                       1,
                                       z,
-                                      &(pba->external_growth_last_index),
+                                      &last_index,
                                       D,
                                       1,
                                       pba->error_message),
              pba->error_message,
              pba->error_message);
 
-  inf = pba->external_growth_last_index;
+  inf = last_index;
   sup = inf+1;
   class_test(sup >= pba->external_growth_size,
              pba->error_message,
@@ -325,6 +329,7 @@ int background_at_z(
   }
 
   if ((pba->has_external_growth == _TRUE_)
+      && (return_format == long_info)
       && (z >= pba->external_growth_z[0])
       && (z <= pba->external_growth_z[pba->external_growth_size-1])) {
     double D_ext;
@@ -338,6 +343,8 @@ int background_at_z(
                pba->error_message);
 
     pvecback[pba->index_bg_D_ext_corr_factor] = D_ext / pvecback[pba->index_bg_D];
+    /* f_external - f_internal, computed before f is overwritten */
+    pvecback[pba->index_bg_D_ext_corr_dlna] = -(1.+z)*dD_dz_ext/D_ext - pvecback[pba->index_bg_f];
 
     /* Normalize the external growth, after computing the correction factor */
     D_ext /= pba->external_growth_D[0];
@@ -793,6 +800,7 @@ int background_functions(
 
     /* default: no rescaling; overridden in background_at_z when external growth is active */
     pvecback[pba->index_bg_D_ext_corr_factor] = 1.0;
+    pvecback[pba->index_bg_D_ext_corr_dlna] = 0.0;
 
     /**- Varying fundamental constants */
     if (pba->has_varconst == _TRUE_) {
@@ -1324,6 +1332,9 @@ int background_indices(
 
   /* -> ratio D_external/D_internal for rescaling linear P(k,z) */
   class_define_index(pba->index_bg_D_ext_corr_factor,_TRUE_,index_bg,1);
+
+  /* -> dln(D_external/D_internal)/dlna, for the ISW source */
+  class_define_index(pba->index_bg_D_ext_corr_dlna,_TRUE_,index_bg,1);
 
   /* -> varying fundamental constant -- alpha (fine structure) */
   class_define_index(pba->index_bg_varc_alpha,pba->has_varconst,index_bg,1);
@@ -2213,6 +2224,8 @@ int background_solve(
         class_call(background_external_growth_at_z(pba, z_i, &D_ext_i, &dD_dz_ext_i),
                    pba->error_message, pba->error_message);
         pba->background_table[index_loga*pba->bg_size + pba->index_bg_D_ext_corr_factor] = D_ext_i / D_int_i;
+        pba->background_table[index_loga*pba->bg_size + pba->index_bg_D_ext_corr_dlna] =
+          -(1.+z_i)*dD_dz_ext_i/D_ext_i - pba->background_table[index_loga*pba->bg_size + pba->index_bg_f];
       }
     }
   }
@@ -2682,6 +2695,7 @@ int background_output_titles(
   class_store_columntitle(titles,"gr.fac. D",_TRUE_);
   if (pba->has_external_growth == _TRUE_) {
     class_store_columntitle(titles,"gr.fac. D external. corr. factor",_TRUE_);
+    class_store_columntitle(titles,"gr.fac. D external. corr. dlna",_TRUE_);
   }
   class_store_columntitle(titles,"gr.fac. f",_TRUE_);
 
@@ -2761,6 +2775,7 @@ int background_output_data(
     class_store_double(dataptr,pvecback[pba->index_bg_D],_TRUE_,storeidx);
     if (pba->has_external_growth == _TRUE_) {
       class_store_double(dataptr,pvecback[pba->index_bg_D_ext_corr_factor],_TRUE_,storeidx);
+      class_store_double(dataptr,pvecback[pba->index_bg_D_ext_corr_dlna],_TRUE_,storeidx);
     }
     class_store_double(dataptr,pvecback[pba->index_bg_f],_TRUE_,storeidx);
 
